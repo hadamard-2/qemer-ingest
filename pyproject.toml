@@ -1,0 +1,17 @@
+[project]
+name = "qemer-ingest"
+version = "0.1.0"
+description = "Build local Qemer documentation corpora from public GitHub repositories"
+readme = "README.md"
+authors = [
+    { name = "Eyob G.", email = "eyob.g.hagos@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+qemer-ingest = "qemer_ingest:main"
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12.0"]
+build-backend = "uv_build"
