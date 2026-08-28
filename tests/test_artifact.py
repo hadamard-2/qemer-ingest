@@ -159,3 +159,38 @@ def test_build_artifact_rejects_wrong_vector_width_with_source_url(
             (invalid,),
             make_report(),
         )
+
+
+@pytest.mark.parametrize("unsafe_kind", ["traversal", "absolute"])
+def test_build_artifact_rejects_unsafe_archive_names_before_staging(
+    tmp_path: Path, unsafe_kind: str
+) -> None:
+    from qemer_ingest.artifact import build_artifact
+
+    output = tmp_path / "output"
+    version = "2.3.0"
+    if unsafe_kind == "traversal":
+        library = f"../escaped-{tmp_path.name}"
+        unintended_archive = (
+            tmp_path.parent / f"escaped-{tmp_path.name}-{version}.tar.zst"
+        )
+    else:
+        library = str(tmp_path.parent / f"absolute-{tmp_path.name}")
+        unintended_archive = Path(f"{library}-{version}.tar.zst")
+
+    try:
+        with pytest.raises(ValueError, match="archive"):
+            build_artifact(
+                output,
+                library,
+                version,
+                "nomic-embed-text-v1.5",
+                3,
+                make_embedded(),
+                make_report(),
+            )
+
+        assert not output.exists()
+        assert not unintended_archive.exists()
+    finally:
+        unintended_archive.unlink(missing_ok=True)

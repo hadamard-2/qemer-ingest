@@ -29,7 +29,7 @@ def build_artifact(
         raise ValueError("dimension must be positive")
     _validate_vectors(embedded, dimension)
 
-    archive_name = f"{library}-{version}.tar.zst"
+    archive_name = _archive_name(library, version)
     with tempfile.TemporaryDirectory(dir=output.parent) as staging_name:
         staging = Path(staging_name)
         parquet_path = staging / "corpus.parquet"
@@ -63,6 +63,14 @@ def _validate_vectors(embedded: tuple[EmbeddedUnit, ...], dimension: int) -> Non
                 f"embedding dimension for {item.unit.source_url} is {len(item.vector)}, "
                 f"expected {dimension}"
             )
+
+
+def _archive_name(library: str, version: str) -> str:
+    archive_name = f"{library}-{version}.tar.zst"
+    archive_path = Path(archive_name)
+    if archive_path.is_absolute() or len(archive_path.parts) != 1:
+        raise ValueError("archive name must be exactly one relative filename")
+    return archive_name
 
 
 def _write_parquet(
