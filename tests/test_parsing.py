@@ -62,6 +62,19 @@ def test_parse_rst_emits_ordinary_text_and_code_block_per_section(
     ]
 
 
+def test_parse_rst_separates_a_nested_literal_block_from_list_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(FIXTURES)
+
+    units = parse_document(Path("nested.rst"), SOURCE, "example-lib", "v1.0.0")
+
+    assert [(unit.kind, unit.title, unit.text) for unit in units] == [
+        ("prose", "Nested literal", "A list item owns a code sample."),
+        ("code", "Nested literal", 'print("nested")'),
+    ]
+
+
 def test_parse_text_uses_file_stem_and_skips_empty_content(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

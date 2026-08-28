@@ -97,15 +97,28 @@ def _rst_children(children: Iterable[nodes.Node], title: str) -> Section:
     prose: list[str] = []
     code: list[str] = []
     for child in children:
-        if isinstance(child, nodes.section):
-            continue
-        if isinstance(child, (nodes.literal_block, nodes.doctest_block)):
-            code.append(child.astext())
-        else:
-            text = child.astext().strip()
-            if text:
-                prose.append(text)
+        text, child_code = _rst_content(child)
+        if text.strip():
+            prose.append(text.strip())
+        code.extend(child_code)
     return (title, "\n\n".join(prose).strip(), "\n\n".join(code).strip())
+
+
+def _rst_content(node: nodes.Node) -> tuple[str, list[str]]:
+    if isinstance(node, nodes.section):
+        return "", []
+    if isinstance(node, (nodes.literal_block, nodes.doctest_block)):
+        return "", [node.astext()]
+    if isinstance(node, nodes.Text):
+        return str(node), []
+
+    prose: list[str] = []
+    code: list[str] = []
+    for child in node.children:
+        text, child_code = _rst_content(child)
+        prose.append(text)
+        code.extend(child_code)
+    return "".join(prose), code
 
 
 def _make_units(
