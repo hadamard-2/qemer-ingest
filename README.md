@@ -50,6 +50,16 @@ Provide the resolved source, corpus identity, embedding contract, and a new outp
 qemer-ingest build https://github.com/numpy/numpy --ref v2.3.0 --library numpy --version 2.3.0 --embedding-url http://127.0.0.1:8080 --embedding-model nomic-embed-text-v1.5 --embedding-dim 768 --output ./qemer-corpora/numpy-2.3.0
 ```
 
+### Overflow chunking
+
+`build` preserves Markdown/RST/TXT structure first, then splits only prose or code units longer than `--chunk-size`. The default is `8000` characters with no overlap. Set `--chunk-overlap` to repeat trailing characters at the start of the next chunk; it must be smaller than the selected chunk size.
+
+```sh
+qemer-ingest build https://github.com/numpy/numpy --ref v2.3.0 --library numpy --version 2.3.0 --embedding-url http://127.0.0.1:8080 --embedding-model nomic-embed-text-v1.5 --embedding-dim 768 --chunk-size 12000 --chunk-overlap 400 --output ./qemer-corpora/numpy-2.3.0
+```
+
+`build-report.json` records `chunk_size` and `chunk_overlap`, so the artifact records the policy used to create its embedding rows.
+
 On success, the output directory contains:
 
 ```text
