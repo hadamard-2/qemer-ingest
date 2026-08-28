@@ -10,7 +10,7 @@ from qemer_ingest.discovery import discover
 from qemer_ingest.embedding import EmbeddingClient
 from qemer_ingest.github import GitHubClient
 from qemer_ingest.models import BuildReport
-from qemer_ingest.parsing import parse_document
+from qemer_ingest.parsing import parse_document_with_report
 
 app = typer.Typer(no_args_is_help=True)
 _INCLUDE_OPTION = typer.Option([], "--include")
@@ -37,9 +37,15 @@ def inspect(
         )
         report = discover(repository_root, tuple(include))
 
+        typer.echo(f"Repository: {source.url}")
+        typer.echo(f"Requested ref: {source.requested_ref}")
         typer.echo(f"Resolved commit: {source.commit_sha}")
         for path in report.selected:
-            typer.echo(path.as_posix())
+            typer.echo(f"Selected: {path.as_posix()}")
+        for path, reason in report.skipped.items():
+            typer.echo(f"Skipped: {path} ({reason})")
+        for path in report.explicitly_included:
+            typer.echo(f"Explicitly included: {path.as_posix()}")
 
 
 @app.command()
@@ -74,23 +80,32 @@ def build(
         if not discovery.selected:
             raise typer.BadParameter("no documentation files selected")
 
-        units = tuple(
-            unit
-            for relative_path in discovery.selected
-            for unit in parse_document(
-                repository_root / relative_path, source, library, version
+        parsed_documents = tuple(
+            parse_document_with_report(
+                repository_root / relative_path,
+                source,
+                library,
+                version,
+                repository_root=repository_root,
             )
+            for relative_path in discovery.selected
         )
+        units = tuple(unit for parsed in parsed_documents for unit in parsed.units)
         if not units:
             raise typer.BadParameter("selected documentation produced no rows")
 
         embedding = EmbeddingClient(embedding_url, embedding_model, embedding_dim)
         embedded = asyncio.run(embedding.embed_all(units))
         report = BuildReport(
+            repository_url=source.url,
             requested_ref=source.requested_ref,
             resolved_commit=source.commit_sha,
             selected_files=discovery.selected,
             skipped_files=discovery.skipped,
+            explicitly_included_files=discovery.explicitly_included,
+            parser_skips=tuple(
+                skip for parsed in parsed_documents for skip in parsed.skipped
+            ),
             prose_rows=sum(unit.kind == "prose" for unit in units),
             code_rows=sum(unit.kind == "code" for unit in units),
         )

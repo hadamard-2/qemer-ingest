@@ -40,14 +40,18 @@ def build_artifact(
         parquet_path.unlink()
         archive_bytes = archive_path.read_bytes()
         manifest = {
-            "library": library,
-            "version": version,
-            "url": archive_name,
-            "sha256": hashlib.sha256(archive_bytes).hexdigest(),
-            "bytes": len(archive_bytes),
-            "embedding_model": model,
-            "embedding_dim": dimension,
-            "snippet_count": len(embedded),
+            "corpora": [
+                {
+                    "library": library,
+                    "version": version,
+                    "url": archive_name,
+                    "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                    "bytes": len(archive_bytes),
+                    "embedding_model": model,
+                    "embedding_dim": dimension,
+                    "snippet_count": len(embedded),
+                }
+            ]
         }
         _write_json(staging / "manifest.json", manifest)
         _write_json(staging / "build-report.json", _report_payload(report))
@@ -79,12 +83,12 @@ def _write_parquet(
     vector_type = pa.list_(pa.float32(), list_size=dimension)
     schema = pa.schema(
         [
-            pa.field("snippet_id", pa.string()),
-            pa.field("kind", pa.string()),
-            pa.field("title", pa.string()),
+            pa.field("snippet_id", pa.string(), nullable=False),
+            pa.field("kind", pa.string(), nullable=False),
+            pa.field("title", pa.string(), nullable=False),
             pa.field("source_url", pa.string()),
-            pa.field("text", pa.string()),
-            pa.field("vector", vector_type),
+            pa.field("text", pa.string(), nullable=False),
+            pa.field("vector", vector_type, nullable=False),
         ]
     )
     table = pa.Table.from_arrays(
@@ -113,10 +117,22 @@ def _write_archive(destination: Path, parquet_path: Path) -> None:
 
 def _report_payload(report: BuildReport) -> dict[str, object]:
     return {
+        "repository_url": report.repository_url,
         "requested_ref": report.requested_ref,
         "resolved_commit": report.resolved_commit,
         "selected_files": [path.as_posix() for path in report.selected_files],
         "skipped_files": report.skipped_files,
+        "explicitly_included_files": [
+            path.as_posix() for path in report.explicitly_included_files
+        ],
+        "parser_skips": [
+            {
+                "path": skip.path.as_posix(),
+                "reason": skip.reason,
+                **({"section": skip.section} if skip.section is not None else {}),
+            }
+            for skip in report.parser_skips
+        ],
         "prose_rows": report.prose_rows,
         "code_rows": report.code_rows,
     }

@@ -45,6 +45,7 @@ async def test_embed_all_posts_one_request_per_unit_and_preserves_order() -> Non
 
     embedded = await client.embed_all(units)
 
+    assert [request.method for request in requests] == ["POST", "POST"]
     assert [request.url.path for request in requests] == ["/v1/embeddings"] * 2
     assert [json.loads(request.content) for request in requests] == [
         {"input": "NumPy is for arrays.", "model": "nomic-embed-text-v1.5"},

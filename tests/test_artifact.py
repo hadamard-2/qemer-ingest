@@ -39,10 +39,13 @@ def make_embedded() -> tuple[EmbeddedUnit, ...]:
 
 def make_report() -> BuildReport:
     return BuildReport(
+        repository_url="https://github.com/numpy/numpy",
         requested_ref="v2.3.0",
         resolved_commit="a" * 40,
         selected_files=(Path("README.md"), Path("docs/example.md")),
         skipped_files={"src/notes.md": "outside default documentation paths"},
+        explicitly_included_files=(),
+        parser_skips=(),
         prose_rows=1,
         code_rows=1,
     )
@@ -73,14 +76,18 @@ def test_build_artifact_writes_the_local_qemer_contract(tmp_path: Path) -> None:
         "build-report.json",
     }
     assert manifest == {
-        "library": "numpy",
-        "version": "2.3.0",
-        "url": archive_name,
-        "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
-        "bytes": archive.stat().st_size,
-        "embedding_model": "nomic-embed-text-v1.5",
-        "embedding_dim": 3,
-        "snippet_count": 2,
+        "corpora": [
+            {
+                "library": "numpy",
+                "version": "2.3.0",
+                "url": archive_name,
+                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "bytes": archive.stat().st_size,
+                "embedding_model": "nomic-embed-text-v1.5",
+                "embedding_dim": 3,
+                "snippet_count": 2,
+            }
+        ]
     }
 
     tar_bytes = zstd.ZstdDecompressor().decompress(archive.read_bytes())
@@ -90,16 +97,6 @@ def test_build_artifact_writes_the_local_qemer_contract(tmp_path: Path) -> None:
         assert parquet_member is not None
         table = pq.read_table(pa.BufferReader(parquet_member.read()))
 
-    assert table.schema == pa.schema(
-        [
-            pa.field("snippet_id", pa.string()),
-            pa.field("kind", pa.string()),
-            pa.field("title", pa.string()),
-            pa.field("source_url", pa.string()),
-            pa.field("text", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), list_size=3)),
-        ]
-    )
     assert table.to_pylist() == [
         {
             "snippet_id": "numpy-2.3-001",
@@ -118,6 +115,45 @@ def test_build_artifact_writes_the_local_qemer_contract(tmp_path: Path) -> None:
             "vector": [4.0, 5.0, 6.0],
         },
     ]
+
+
+def test_build_artifact_uses_the_independent_qemer_parquet_schema(
+    tmp_path: Path,
+) -> None:
+    from qemer_ingest.artifact import build_artifact
+
+    output = tmp_path / "numpy-2.3.0"
+    build_artifact(
+        output,
+        "numpy",
+        "2.3.0",
+        "nomic-embed-text-v1.5",
+        3,
+        make_embedded(),
+        make_report(),
+    )
+
+    archive = output / "numpy-2.3.0.tar.zst"
+    tar_bytes = zstd.ZstdDecompressor().decompress(archive.read_bytes())
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tar:
+        parquet_member = tar.extractfile("corpus.parquet")
+        assert parquet_member is not None
+        table = pq.read_table(pa.BufferReader(parquet_member.read()))
+
+    assert table.schema == pa.schema(
+        [
+            pa.field("snippet_id", pa.string(), nullable=False),
+            pa.field("kind", pa.string(), nullable=False),
+            pa.field("title", pa.string(), nullable=False),
+            pa.field("source_url", pa.string()),
+            pa.field("text", pa.string(), nullable=False),
+            pa.field(
+                "vector",
+                pa.list_(pa.float32(), list_size=3),
+                nullable=False,
+            ),
+        ]
+    )
 
 
 def test_build_artifact_rejects_an_existing_output(tmp_path: Path) -> None:

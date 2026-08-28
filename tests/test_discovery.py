@@ -29,12 +29,44 @@ def test_discover_selects_conventional_docs_and_explicit_includes(
         "docs/guide.md",
         "documentation/intro.txt",
     ]
+    assert default_report.skipped == {
+        ".github/guide.md": "excluded path",
+        "node_modules/readme.md": "excluded path",
+        "src/notes.md": "outside default documentation paths",
+    }
+    assert default_report.explicitly_included == ()
     assert [path.as_posix() for path in included_report.selected] == [
         "README.md",
         "doc/api.rst",
         "docs/guide.md",
         "documentation/intro.txt",
         "src/notes.md",
+    ]
+    assert [path.as_posix() for path in included_report.explicitly_included] == [
+        "src/notes.md"
+    ]
+
+
+def test_discover_selects_only_the_exact_supported_root_readme_names(
+    tmp_path: Path,
+) -> None:
+    for name in (
+        "README",
+        "readme.MD",
+        "ReadMe.rSt",
+        "README.TXT",
+        "README.py",
+        "README.yaml",
+    ):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+
+    report = discover(tmp_path, ())
+
+    assert [path.as_posix() for path in report.selected] == [
+        "README",
+        "README.TXT",
+        "ReadMe.rSt",
+        "readme.MD",
     ]
 
 
@@ -78,4 +110,9 @@ def test_discover_includes_do_not_bypass_excluded_paths(tmp_path: Path) -> None:
     report = discover(tmp_path, excluded_files)
 
     assert report.selected == ()
-    assert report.skipped == {}
+    assert report.skipped == {
+        ".git/guide.md": "excluded path",
+        ".private/notes.md": "excluded path",
+        "vendor/manual.md": "excluded path",
+    }
+    assert report.explicitly_included == ()

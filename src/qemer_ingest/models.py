@@ -16,14 +16,25 @@ class RepositoryRef:
 class DiscoveryReport:
     selected: tuple[Path, ...]
     skipped: dict[str, str]
+    explicitly_included: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ParserSkip:
+    path: Path
+    reason: str
+    section: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class BuildReport:
+    repository_url: str
     requested_ref: str
     resolved_commit: str
     selected_files: tuple[Path, ...]
     skipped_files: dict[str, str]
+    explicitly_included_files: tuple[Path, ...]
+    parser_skips: tuple[ParserSkip, ...]
     prose_rows: int
     code_rows: int
 
@@ -48,3 +59,9 @@ class DocumentUnit:
 class EmbeddedUnit:
     unit: DocumentUnit
     vector: list[float]
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedDocument:
+    units: tuple[DocumentUnit, ...]
+    skipped: tuple[ParserSkip, ...]

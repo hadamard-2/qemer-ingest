@@ -91,6 +91,71 @@ def test_parse_rst_preserves_nested_list_paragraph_boundaries(
     ]
 
 
+def test_parse_rst_keeps_document_introduction_before_named_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(FIXTURES)
+
+    units = parse_document(
+        Path("document-introduction.rst"), SOURCE, "example-lib", "v1.0.0"
+    )
+
+    assert [(unit.kind, unit.title, unit.text) for unit in units] == [
+        (
+            "prose",
+            "Project Guide",
+            "This introduction applies to the whole document.",
+        ),
+        ("prose", "Usage", "Use the public API."),
+        ("code", "Usage", 'print("usage")'),
+    ]
+
+
+def test_parse_document_uses_repository_relative_identity_across_roots(
+    tmp_path: Path,
+) -> None:
+    repository_path = Path("docs/guide.md")
+    roots = (tmp_path / "first-extraction", tmp_path / "second-extraction")
+    parsed = []
+    for root in roots:
+        document = root / repository_path
+        document.parent.mkdir(parents=True)
+        document.write_text("# Guide\n\nStable prose.\n", encoding="utf-8")
+        parsed.append(
+            parse_document(
+                document,
+                SOURCE,
+                "example-lib",
+                "v1.0.0",
+                repository_root=root,
+            )
+        )
+
+    assert [unit.snippet_id for unit in parsed[0]] == [
+        unit.snippet_id for unit in parsed[1]
+    ]
+    assert {unit.source_url for units in parsed for unit in units} == {
+        f"https://github.com/example/project/blob/{SOURCE.commit_sha}/docs/guide.md"
+    }
+
+
+def test_empty_sections_do_not_consume_emitted_section_ordinals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    document = tmp_path / "guide.rst"
+    document.write_text(
+        "Guide\n=====\n\nEmpty\n-----\n\nKept\n----\n\nUseful prose.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    units = parse_document(Path("guide.rst"), SOURCE, "example-lib", "v1.0.0")
+
+    assert [(unit.title, unit.snippet_id) for unit in units] == [
+        ("Kept", expected_id("guide.rst", 1))
+    ]
+
+
 def test_parse_text_uses_file_stem_and_skips_empty_content(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -106,6 +171,19 @@ def test_parse_text_uses_file_stem_and_skips_empty_content(
     ]
     assert text_units[0].snippet_id == expected_id("overview.TXT", 1)
     assert empty_units == ()
+
+
+def test_parse_bare_readme_as_plain_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "README").write_text("Repository overview.\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    units = parse_document(Path("README"), SOURCE, "example-lib", "v1.0.0")
+
+    assert [(unit.kind, unit.title, unit.text) for unit in units] == [
+        ("prose", "README", "Repository overview."),
+    ]
 
 
 def test_parse_document_rejects_unsupported_extension(

@@ -115,6 +115,47 @@ async def test_download_archive_extracts_and_returns_its_single_top_level_direct
 
 
 @pytest.mark.asyncio
+async def test_download_archive_follows_githubs_codeload_redirect(
+    tmp_path: Path,
+) -> None:
+    source = RepositoryRef(
+        url="https://github.com/numpy/numpy",
+        owner="numpy",
+        repository="numpy",
+        requested_ref="v2.3.0",
+        commit_sha="b" * 40,
+    )
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.host == "api.github.com":
+            return httpx.Response(
+                302,
+                headers={
+                    "Location": (
+                        "https://codeload.github.com/numpy/numpy/legacy.tar.gz/"
+                        f"{source.commit_sha}"
+                    )
+                },
+            )
+        return httpx.Response(
+            200,
+            content=build_archive(f"numpy-{source.commit_sha}/README.md"),
+        )
+
+    client = GitHubClient(transport=httpx.MockTransport(handler))
+
+    extracted = await client.download_archive(source, tmp_path)
+
+    assert [request.url.host for request in requests] == [
+        "api.github.com",
+        "codeload.github.com",
+    ]
+    assert (extracted / "README.md").read_bytes() == b"NumPy documentation"
+
+
+@pytest.mark.asyncio
 async def test_download_archive_rejects_non_immutable_source_before_request(
     tmp_path: Path,
 ) -> None:

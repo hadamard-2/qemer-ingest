@@ -70,7 +70,9 @@ class GitHubClient:
 
     async def _get(self, path: str) -> httpx.Response:
         async with httpx.AsyncClient(
-            base_url=GITHUB_API_URL, transport=self._transport
+            base_url=GITHUB_API_URL,
+            transport=self._transport,
+            follow_redirects=True,
         ) as client:
             response = await client.get(path)
             response.raise_for_status()
