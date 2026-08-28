@@ -7,7 +7,14 @@ authors = [
     { name = "Eyob G.", email = "eyob.g.hagos@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "docutils>=0.23",
+    "httpx>=0.28.1",
+    "markdown-it-py>=4.2.0",
+    "pyarrow>=25.0.1",
+    "typer>=0.27.1",
+    "zstandard>=0.25.0",
+]
 
 [project.scripts]
 qemer-ingest = "qemer_ingest:main"
@@ -15,3 +22,10 @@ qemer-ingest = "qemer_ingest:main"
 [build-system]
 requires = ["uv_build>=0.11.6,<0.12.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.5",
+]

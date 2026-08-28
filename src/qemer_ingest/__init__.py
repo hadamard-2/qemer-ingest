@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from qemer-ingest!")
+from qemer_ingest.cli import main
+
+__all__ = ["main"]
