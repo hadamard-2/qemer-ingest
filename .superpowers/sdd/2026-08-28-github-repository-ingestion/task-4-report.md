@@ -61,3 +61,29 @@ GREEN: the same targeted command reported `1 passed in 0.10s` after the descenda
 ### Self-review
 
 Verified that direct and nested literals both flow through the same terminal branch, so nested code cannot be duplicated into prose; text inside ordinary list/quote/container descendants still contributes to prose; code blocks retain traversal order before joining; and the fix leaves deferred empty-section ordinal behavior unchanged.
+
+## Review fix round 2
+
+### Root cause and implementation
+
+The descendant traversal introduced in round 1 correctly returned each nested paragraph as a distinct text value, but it used `"".join(...)` for every non-text node. A list item containing two paragraph children therefore lost the document-tree block boundary and emitted `first paragraphsecond paragraph`. The traversal now preserves contiguous inline content inside `nodes.inline` and `nodes.paragraph`, while joining ordinary container children with two newlines. Literal and doctest blocks remain terminal code values and are still excluded from prose.
+
+### Covering test and TDD evidence
+
+Added local fixture `tests/fixtures/nested-prose.rst` and `test_parse_rst_preserves_nested_list_paragraph_boundaries` in `tests/test_parsing.py`. The fixture has two paragraphs in one list item and requires the observable prose result `First paragraph in the list.\n\nSecond paragraph in the same list item.`.
+
+RED: `QEMER_UV_CACHE=/tmp/qemer-ingest-uv-cache UV_CACHE_DIR="$QEMER_UV_CACHE" uv run pytest tests/test_parsing.py::test_parse_rst_preserves_nested_list_paragraph_boundaries -q` reported `1 failed in 0.10s`. The actual text was `First paragraph in the list.Second paragraph in the same list item.`, with the expected blank-line separator absent.
+
+GREEN: the same targeted command reported `1 passed in 0.09s` after using a block-aware join separator.
+
+### Final verification
+
+- `QEMER_UV_CACHE=/tmp/qemer-ingest-uv-cache UV_CACHE_DIR="$QEMER_UV_CACHE" uv run pytest tests/test_parsing.py -q` reported `6 passed in 0.10s`.
+- `QEMER_UV_CACHE=/tmp/qemer-ingest-uv-cache UV_CACHE_DIR="$QEMER_UV_CACHE" uv run pytest -q` reported `26 passed in 0.13s`.
+- `QEMER_UV_CACHE=/tmp/qemer-ingest-uv-cache UV_CACHE_DIR="$QEMER_UV_CACHE" uv run ruff check src/qemer_ingest/parsing.py tests/test_parsing.py` reported `All checks passed!`.
+- `QEMER_UV_CACHE=/tmp/qemer-ingest-uv-cache UV_CACHE_DIR="$QEMER_UV_CACHE" uv run ruff format --check src/qemer_ingest/parsing.py tests/test_parsing.py` reported `2 files already formatted`.
+- `git diff --check` completed without output.
+
+### Self-review
+
+Verified the new separator applies at the block-container boundary rather than between fragments of a paragraph, so inline content stays contiguous, adjacent nested paragraphs remain legible, and the round-1 nested literal regression still emits a separate code unit.

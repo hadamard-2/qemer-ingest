@@ -75,6 +75,22 @@ def test_parse_rst_separates_a_nested_literal_block_from_list_prose(
     ]
 
 
+def test_parse_rst_preserves_nested_list_paragraph_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(FIXTURES)
+
+    units = parse_document(Path("nested-prose.rst"), SOURCE, "example-lib", "v1.0.0")
+
+    assert [(unit.kind, unit.title, unit.text) for unit in units] == [
+        (
+            "prose",
+            "Nested prose",
+            "First paragraph in the list.\n\nSecond paragraph in the same list item.",
+        ),
+    ]
+
+
 def test_parse_text_uses_file_stem_and_skips_empty_content(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

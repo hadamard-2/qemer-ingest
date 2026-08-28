@@ -118,7 +118,8 @@ def _rst_content(node: nodes.Node) -> tuple[str, list[str]]:
         text, child_code = _rst_content(child)
         prose.append(text)
         code.extend(child_code)
-    return "".join(prose), code
+    separator = "" if isinstance(node, (nodes.inline, nodes.paragraph)) else "\n\n"
+    return separator.join(text for text in prose if text), code
 
 
 def _make_units(
