@@ -39,3 +39,19 @@ Checked that inclusion cannot bypass excluded hidden or dependency paths, discov
 ## Concerns
 
 None identified within this task's scope.
+
+## Review fix round 1
+
+The review identified that `DiscoveryReport.skipped` retained `Path.rglob` traversal order. Added a real-filesystem regression case with undecodable files in `docs/a-first.md`, `docs/z-last/deep.md`, and `documentation/a-intro.md`; this layout exposes the depth-first order differing from sorted repository-relative POSIX order. `discover` now sorts skipped entries by their POSIX-string keys before constructing the report.
+
+Added a real-filesystem exclusion behavior test that explicitly includes `.private/notes.md`, `.git/guide.md`, and `vendor/manual.md`. The test confirms no selection or skipped result is produced, so explicit include globs cannot bypass the hidden, Git, or vendor guards.
+
+RED: `uv run pytest tests/test_discovery.py -q` reported `1 failed, 2 passed in 0.09s`, with `documentation/a-intro.md` occurring before `docs/z-last/deep.md` in skipped iteration order.
+
+GREEN: `uv run pytest tests/test_discovery.py tests/test_cli_inspect.py -q` reported `4 passed in 0.07s`.
+
+Final covering commands: `uv run pytest tests/test_discovery.py tests/test_cli_inspect.py -q`, `uv run ruff check src tests`, and `git diff --check`.
+
+Self-review: verified that the new sort applies only to skipped-map presentation and does not affect selection, UTF-8 validation, or exclusion precedence. The ordering test uses real `Path.rglob` traversal across nested directories, while the include-exclusion test uses actual filesystem paths and no mocks.
+
+Concerns: none identified within this review-fix scope.
