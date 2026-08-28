@@ -26,3 +26,22 @@ Reviewed the final diff against the task boundary. URL parsing happens before cl
 ## Concerns
 
 None for the requested scope. Runtime calls use GitHub's unauthenticated public API and may therefore be subject to GitHub's public rate limits; this task intentionally does not add private-repository authentication or retries.
+
+## Review fix round 1/5
+
+### Implementation
+
+`GitHubClient.download_archive` now independently requires `RepositoryRef.commit_sha` to be a full 40-character hexadecimal SHA before making its archive request, so a caller-constructed mutable ref cannot reach GitHub's tarball endpoint. After extraction, it now requires the sole top-level path to exist as a directory before returning it.
+
+### Covering tests and commands
+
+The covering file is `tests/test_github.py`. `test_download_archive_rejects_non_immutable_source_before_request` uses a `MockTransport` handler that raises if it receives a request, proving a mutable `main` source is rejected first. `test_download_archive_rejects_an_archive_without_a_top_level_directory` uses an in-memory gzipped tar containing only `README.md` and requires a `ValueError`.
+
+- RED: `uv run pytest tests/test_github.py -q` — 2 failed, 12 passed. The mutable-source test showed a request to `/repos/numpy/numpy/tarball/main`; the flat-archive test reported that it did not raise `ValueError`.
+- GREEN: `uv run pytest tests/test_github.py -q` — 14 passed in 0.09s.
+- Lint: `uv run ruff check src/qemer_ingest/github.py tests/test_github.py` — all checks passed.
+- Full regression: `uv run pytest -q` — 16 passed in 0.12s.
+
+### Self-review
+
+The SHA guard runs before `_get`, so it prevents a mutable tarball request rather than only rejecting it after network activity. The directory check uses the actual extraction destination, which allows valid archives whose root directory is implied by nested entries while rejecting a single flat file.

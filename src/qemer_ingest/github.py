@@ -50,6 +50,10 @@ class GitHubClient:
         return RepositoryRef(url, owner, repository, ref, sha)
 
     async def download_archive(self, source: RepositoryRef, destination: Path) -> Path:
+        if not isinstance(source.commit_sha, str) or not COMMIT_SHA.fullmatch(
+            source.commit_sha
+        ):
+            raise ValueError("repository source must include a full SHA")
         response = await self._get(
             f"/repos/{source.owner}/{source.repository}/tarball/{source.commit_sha}"
         )
@@ -59,7 +63,10 @@ class GitHubClient:
             for member in members:
                 self._validate_member(member)
             archive.extractall(destination, members=members, filter="data")
-        return destination / top_level
+        extracted = destination / top_level
+        if not extracted.is_dir():
+            raise ValueError("archive must contain one top-level directory")
+        return extracted
 
     async def _get(self, path: str) -> httpx.Response:
         async with httpx.AsyncClient(

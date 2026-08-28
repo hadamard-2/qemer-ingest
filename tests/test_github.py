@@ -110,6 +110,48 @@ async def test_download_archive_extracts_and_returns_its_single_top_level_direct
 
 
 @pytest.mark.asyncio
+async def test_download_archive_rejects_non_immutable_source_before_request(
+    tmp_path: Path,
+) -> None:
+    source = RepositoryRef(
+        url="https://github.com/numpy/numpy",
+        owner="numpy",
+        repository="numpy",
+        requested_ref="main",
+        commit_sha="main",
+    )
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("a mutable source must not request an archive")
+
+    client = GitHubClient(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ValueError, match="full SHA"):
+        await client.download_archive(source, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_download_archive_rejects_an_archive_without_a_top_level_directory(
+    tmp_path: Path,
+) -> None:
+    source = RepositoryRef(
+        url="https://github.com/numpy/numpy",
+        owner="numpy",
+        repository="numpy",
+        requested_ref="v2.3.0",
+        commit_sha="b" * 40,
+    )
+    client = GitHubClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, content=build_archive("README.md"))
+        )
+    )
+
+    with pytest.raises(ValueError, match="top-level directory"):
+        await client.download_archive(source, tmp_path)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("member_name", ("/README.md", "numpy-archive/../README.md"))
 async def test_download_archive_rejects_unsafe_member_paths(
     tmp_path: Path, member_name: str
