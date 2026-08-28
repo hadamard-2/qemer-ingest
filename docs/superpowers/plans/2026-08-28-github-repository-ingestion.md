@@ -61,13 +61,17 @@ from qemer_ingest.models import DocumentUnit, RepositoryRef
 
 
 def test_repository_ref_keeps_the_resolved_commit() -> None:
-    source = RepositoryRef("https://github.com/numpy/numpy", "numpy", "numpy", "v2.3.0", "a" * 40)
+    source = RepositoryRef(
+        "https://github.com/numpy/numpy", "numpy", "numpy", "v2.3.0", "a" * 40
+    )
     assert source.commit_sha == "a" * 40
 
 
 def test_document_unit_rejects_empty_text() -> None:
     try:
-        DocumentUnit("numpy-2.3-readme-0001", "prose", "README", "https://example.test", "")
+        DocumentUnit(
+            "numpy-2.3-readme-0001", "prose", "README", "https://example.test", ""
+        )
     except ValueError as error:
         assert "text" in str(error)
     else:
@@ -113,7 +117,11 @@ Make a handler return `{"sha": "b" * 40}` for `GET /repos/numpy/numpy/commits/v2
 ```python
 client = GitHubClient(transport=httpx.MockTransport(handler))
 resolved = await client.resolve("https://github.com/numpy/numpy", "v2.3.0")
-assert (resolved.owner, resolved.repository, resolved.commit_sha) == ("numpy", "numpy", "b" * 40)
+assert (resolved.owner, resolved.repository, resolved.commit_sha) == (
+    "numpy",
+    "numpy",
+    "b" * 40,
+)
 ```
 
 Also assert `git@github.com:numpy/numpy.git`, `https://github.com/numpy/numpy/tree/main`, and `https://gitlab.com/numpy/numpy` raise `ValueError` before a request.

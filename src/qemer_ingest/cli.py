@@ -1,14 +1,20 @@
 import asyncio
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import typer
 
+from qemer_ingest.artifact import build_artifact
 from qemer_ingest.discovery import discover
+from qemer_ingest.embedding import EmbeddingClient
 from qemer_ingest.github import GitHubClient
+from qemer_ingest.models import BuildReport
+from qemer_ingest.parsing import parse_document
 
 app = typer.Typer(no_args_is_help=True)
 _INCLUDE_OPTION = typer.Option([], "--include")
+_OUTPUT_OPTION = typer.Option(..., "--output")
 
 
 @app.callback()
@@ -34,6 +40,74 @@ def inspect(
         typer.echo(f"Resolved commit: {source.commit_sha}")
         for path in report.selected:
             typer.echo(path.as_posix())
+
+
+@app.command()
+def build(
+    repository_url: str,
+    ref: str = typer.Option(..., "--ref"),
+    library: str = typer.Option(..., "--library"),
+    version: str = typer.Option(..., "--version"),
+    embedding_url: str = typer.Option(..., "--embedding-url"),
+    embedding_model: str = typer.Option(..., "--embedding-model"),
+    embedding_dim: int = typer.Option(..., "--embedding-dim"),
+    output: Path = _OUTPUT_OPTION,
+    include: list[str] = _INCLUDE_OPTION,
+) -> None:
+    """Build a local corpus artifact from a resolved repository revision."""
+    if not library.strip():
+        raise typer.BadParameter("must not be empty", param_hint="--library")
+    if not version.strip():
+        raise typer.BadParameter("must not be empty", param_hint="--version")
+    if embedding_dim <= 0:
+        raise typer.BadParameter("must be positive", param_hint="--embedding-dim")
+    if os.path.lexists(output):
+        raise typer.BadParameter("must not already exist", param_hint="--output")
+
+    github = GitHubClient()
+    source = asyncio.run(github.resolve(repository_url, ref))
+    with TemporaryDirectory() as temporary_directory:
+        repository_root = asyncio.run(
+            github.download_archive(source, Path(temporary_directory))
+        )
+        discovery = discover(repository_root, tuple(include))
+        if not discovery.selected:
+            raise typer.BadParameter("no documentation files selected")
+
+        units = tuple(
+            unit
+            for relative_path in discovery.selected
+            for unit in parse_document(
+                repository_root / relative_path, source, library, version
+            )
+        )
+        if not units:
+            raise typer.BadParameter("selected documentation produced no rows")
+
+        embedding = EmbeddingClient(embedding_url, embedding_model, embedding_dim)
+        embedded = asyncio.run(embedding.embed_all(units))
+        report = BuildReport(
+            requested_ref=source.requested_ref,
+            resolved_commit=source.commit_sha,
+            selected_files=discovery.selected,
+            skipped_files=discovery.skipped,
+            prose_rows=sum(unit.kind == "prose" for unit in units),
+            code_rows=sum(unit.kind == "code" for unit in units),
+        )
+        build_artifact(
+            output,
+            library,
+            version,
+            embedding_model,
+            embedding_dim,
+            embedded,
+            report,
+        )
+
+    typer.echo(f"Resolved commit: {source.commit_sha}")
+    typer.echo(f"Selected files: {len(discovery.selected)}")
+    typer.echo(f"Emitted rows: {len(embedded)}")
+    typer.echo(f"Manifest: {output / 'manifest.json'}")
 
 
 def main() -> None:

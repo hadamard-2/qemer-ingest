@@ -3,7 +3,9 @@ from pathlib import Path
 from qemer_ingest.discovery import discover
 
 
-def test_discover_selects_conventional_docs_and_explicit_includes(tmp_path: Path) -> None:
+def test_discover_selects_conventional_docs_and_explicit_includes(
+    tmp_path: Path,
+) -> None:
     files = {
         "README.md": "Project overview",
         "docs/guide.md": "Guide",

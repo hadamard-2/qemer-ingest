@@ -33,7 +33,9 @@ def discover(root: Path, includes: tuple[str, ...]) -> DiscoveryReport:
         selected.append(relative_path)
 
     selected.sort(key=lambda path: path.as_posix())
-    return DiscoveryReport(selected=tuple(selected), skipped=dict(sorted(skipped.items())))
+    return DiscoveryReport(
+        selected=tuple(selected), skipped=dict(sorted(skipped.items()))
+    )
 
 
 def _is_excluded(path: PurePosixPath) -> bool:

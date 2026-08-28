@@ -10,7 +10,10 @@ from qemer_ingest.models import RepositoryRef
 
 
 def test_parse_repository_url_accepts_public_github_https_url() -> None:
-    assert parse_repository_url("https://github.com/numpy/numpy.git") == ("numpy", "numpy")
+    assert parse_repository_url("https://github.com/numpy/numpy.git") == (
+        "numpy",
+        "numpy",
+    )
 
 
 @pytest.mark.parametrize(
@@ -99,7 +102,9 @@ async def test_download_archive_extracts_and_returns_its_single_top_level_direct
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.path == f"/repos/numpy/numpy/tarball/{source.commit_sha}"
-        return httpx.Response(200, content=build_archive(f"numpy-{source.commit_sha}/README.md"))
+        return httpx.Response(
+            200, content=build_archive(f"numpy-{source.commit_sha}/README.md")
+        )
 
     client = GitHubClient(transport=httpx.MockTransport(handler))
 

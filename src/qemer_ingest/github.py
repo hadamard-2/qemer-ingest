@@ -78,7 +78,9 @@ class GitHubClient:
 
     @staticmethod
     def _top_level_directory(members: list[tarfile.TarInfo]) -> str:
-        top_levels = {PurePosixPath(member.name).parts[0] for member in members if member.name}
+        top_levels = {
+            PurePosixPath(member.name).parts[0] for member in members if member.name
+        }
         if len(top_levels) != 1:
             raise ValueError("archive must contain one top-level directory")
         return top_levels.pop()
