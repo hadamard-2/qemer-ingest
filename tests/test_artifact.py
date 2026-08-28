@@ -48,6 +48,8 @@ def make_report() -> BuildReport:
         parser_skips=(),
         prose_rows=1,
         code_rows=1,
+        chunk_size=8000,
+        chunk_overlap=0,
     )
 
 

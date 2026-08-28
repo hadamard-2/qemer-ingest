@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import ClassVar
 
@@ -24,6 +25,16 @@ class FakeGitHubClient:
         repository_root.mkdir()
         (repository_root / "README.md").write_text(
             "# NumPy\n\nNumPy provides multidimensional arrays.\n", encoding="utf-8"
+        )
+        return repository_root
+
+
+class LongReadmeGitHubClient(FakeGitHubClient):
+    async def download_archive(self, source: RepositoryRef, destination: Path) -> Path:
+        repository_root = destination / "numpy-a"
+        repository_root.mkdir()
+        (repository_root / "README.md").write_text(
+            "# Overflow\n\nabcdefghijklmnopqrst\n", encoding="utf-8"
         )
         return repository_root
 
@@ -154,6 +165,8 @@ def test_build_writes_local_artifact_from_resolved_repository(
         "parser_skips": [],
         "prose_rows": 1,
         "code_rows": 0,
+        "chunk_size": 8000,
+        "chunk_overlap": 0,
     }
 
 
@@ -210,6 +223,8 @@ def test_build_report_records_discovery_and_parser_decisions(
         ],
         "prose_rows": 2,
         "code_rows": 0,
+        "chunk_size": 8000,
+        "chunk_overlap": 0,
     }
 
 
@@ -254,6 +269,42 @@ def test_build_uses_repository_relative_identity_across_extraction_roots(
     assert second.source_url == first.source_url
 
 
+def test_build_chunks_before_embedding_and_records_the_requested_policy(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli, "GitHubClient", LongReadmeGitHubClient)
+    monkeypatch.setattr(cli, "EmbeddingClient", RecordingEmbeddingClient)
+    RecordingEmbeddingClient.calls.clear()
+    output = tmp_path / "numpy-chunked"
+
+    result = CliRunner().invoke(
+        cli.app,
+        build_arguments(output) + ["--chunk-size", "8", "--chunk-overlap", "2"],
+    )
+
+    assert result.exit_code == 0, result.output
+    embedded = RecordingEmbeddingClient.calls[0]
+    digest_input = "numpy\x002.3.0\x00README.md\x001"
+    digest = sha256(digest_input.encode()).hexdigest()[:16]
+    parent_id = f"numpy-2.3.0-{digest}"
+    assert [unit.snippet_id for unit in embedded] == [
+        f"{parent_id}-prose-001",
+        f"{parent_id}-prose-002",
+        f"{parent_id}-prose-003",
+    ]
+    assert json.loads((output / "build-report.json").read_text())["chunk_size"] == 8
+    assert json.loads((output / "build-report.json").read_text())["chunk_overlap"] == 2
+
+
+def test_build_help_describes_overflow_chunking_options() -> None:
+    result = CliRunner().invoke(cli.app, ["build", "--help"])
+    assert result.exit_code == 0
+    assert "--chunk-size" in result.output
+    assert "--chunk-overlap" in result.output
+    assert "8000" in result.output
+    assert "0" in result.output
+
+
 @pytest.mark.parametrize(
     ("invalid_option", "invalid_value", "message"),
     (
@@ -282,6 +333,48 @@ def test_build_rejects_invalid_preflight_before_external_clients(
     assert result.exit_code != 0
     assert message in result.output
     assert not isinstance(result.exception, AssertionError)
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    (
+        ("--chunk-size", "0", "must be positive"),
+        ("--chunk-overlap", "-1", "must be non-negative"),
+    ),
+)
+def test_build_rejects_invalid_chunk_options_before_external_clients(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    option: str,
+    value: str,
+    message: str,
+) -> None:
+    def unexpected_client() -> None:
+        raise AssertionError("invalid chunk option constructed a GitHub client")
+
+    monkeypatch.setattr(cli, "GitHubClient", unexpected_client)
+    arguments = build_arguments(tmp_path / "output") + [option, value]
+    result = CliRunner().invoke(cli.app, arguments)
+
+    assert result.exit_code != 0
+    assert message in result.output
+
+
+def test_build_rejects_overlap_equal_to_chunk_size_before_external_clients(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def unexpected_client() -> None:
+        raise AssertionError("invalid chunk option constructed a GitHub client")
+
+    monkeypatch.setattr(cli, "GitHubClient", unexpected_client)
+    result = CliRunner().invoke(
+        cli.app,
+        build_arguments(tmp_path / "output")
+        + ["--chunk-size", "8", "--chunk-overlap", "8"],
+    )
+
+    assert result.exit_code != 0
+    assert "must be smaller than chunk size" in result.output
 
 
 def test_build_rejects_existing_output_before_external_clients(

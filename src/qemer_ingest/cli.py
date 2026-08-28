@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import typer
 
 from qemer_ingest.artifact import build_artifact
+from qemer_ingest.chunking import chunk_units
 from qemer_ingest.discovery import discover
 from qemer_ingest.embedding import EmbeddingClient
 from qemer_ingest.github import GitHubClient
@@ -15,6 +16,8 @@ from qemer_ingest.parsing import parse_document_with_report
 app = typer.Typer(no_args_is_help=True)
 _INCLUDE_OPTION = typer.Option([], "--include")
 _OUTPUT_OPTION = typer.Option(..., "--output")
+_CHUNK_SIZE_OPTION = typer.Option(8000, "--chunk-size")
+_CHUNK_OVERLAP_OPTION = typer.Option(0, "--chunk-overlap")
 
 
 @app.callback()
@@ -59,6 +62,8 @@ def build(
     embedding_dim: int = typer.Option(..., "--embedding-dim"),
     output: Path = _OUTPUT_OPTION,
     include: list[str] = _INCLUDE_OPTION,
+    chunk_size: int = _CHUNK_SIZE_OPTION,
+    chunk_overlap: int = _CHUNK_OVERLAP_OPTION,
 ) -> None:
     """Build a local corpus artifact from a resolved repository revision."""
     if not library.strip():
@@ -67,6 +72,14 @@ def build(
         raise typer.BadParameter("must not be empty", param_hint="--version")
     if embedding_dim <= 0:
         raise typer.BadParameter("must be positive", param_hint="--embedding-dim")
+    if chunk_size <= 0:
+        raise typer.BadParameter("must be positive", param_hint="--chunk-size")
+    if chunk_overlap < 0:
+        raise typer.BadParameter("must be non-negative", param_hint="--chunk-overlap")
+    if chunk_overlap >= chunk_size:
+        raise typer.BadParameter(
+            "must be smaller than chunk size", param_hint="--chunk-overlap"
+        )
     if os.path.lexists(output):
         raise typer.BadParameter("must not already exist", param_hint="--output")
 
@@ -90,7 +103,14 @@ def build(
             )
             for relative_path in discovery.selected
         )
-        units = tuple(unit for parsed in parsed_documents for unit in parsed.units)
+        parsed_units = tuple(
+            unit for parsed in parsed_documents for unit in parsed.units
+        )
+        units = chunk_units(
+            parsed_units,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
         if not units:
             raise typer.BadParameter("selected documentation produced no rows")
 
@@ -108,6 +128,8 @@ def build(
             ),
             prose_rows=sum(unit.kind == "prose" for unit in units),
             code_rows=sum(unit.kind == "code" for unit in units),
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
         )
         build_artifact(
             output,
