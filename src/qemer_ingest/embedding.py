@@ -2,6 +2,8 @@ import httpx
 
 from qemer_ingest.models import DocumentUnit, EmbeddedUnit
 
+_EMBEDDING_TIMEOUT_SECONDS = 60.0
+
 
 class EmbeddingClient:
     """Embed document units through an already-running compatible endpoint."""
@@ -26,7 +28,9 @@ class EmbeddingClient:
         self, units: tuple[DocumentUnit, ...]
     ) -> tuple[EmbeddedUnit, ...]:
         embedded: list[EmbeddedUnit] = []
-        async with httpx.AsyncClient(transport=self._transport) as client:
+        async with httpx.AsyncClient(
+            transport=self._transport, timeout=_EMBEDDING_TIMEOUT_SECONDS
+        ) as client:
             for unit in units:
                 vector = await self._embed_one(client, unit)
                 embedded.append(EmbeddedUnit(unit, vector))

@@ -90,6 +90,28 @@ async def test_embed_all_prefixes_requests_without_changing_document_units() -> 
 
 
 @pytest.mark.asyncio
+async def test_embed_all_allows_a_sixty_second_response_time() -> None:
+    from qemer_ingest.embedding import EmbeddingClient
+
+    observed_timeout: dict[str, float | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed_timeout.update(request.extensions["timeout"])
+        return httpx.Response(200, json={"data": [{"embedding": [1.0, 2.0, 3.0]}]})
+
+    client = EmbeddingClient(
+        "http://embeddings.test",
+        "nomic-embed-text-v1.5",
+        3,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.embed_all((make_units()[0],))
+
+    assert observed_timeout["read"] == 60.0
+
+
+@pytest.mark.asyncio
 async def test_embed_all_rejects_an_empty_response_with_the_source_url() -> None:
     from qemer_ingest.embedding import EmbeddingClient
 

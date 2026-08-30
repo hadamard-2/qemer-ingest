@@ -1,7 +1,8 @@
 import json
 from hashlib import sha256
 from pathlib import Path
-from typing import ClassVar
+from types import TracebackType
+from typing import ClassVar, Self
 
 import pytest
 from typer.testing import CliRunner
@@ -77,8 +78,24 @@ class NoUnitsGitHubClient(FakeGitHubClient):
 
 
 class FakeTokenizationClient:
+    entered = 0
+    exited = 0
+
     def __init__(self, base_url: str) -> None:
-        assert base_url == "http://127.0.0.1:8080"
+        self.base_url = base_url
+        assert self.base_url == "http://127.0.0.1:8080"
+
+    async def __aenter__(self) -> Self:
+        FakeTokenizationClient.entered += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        FakeTokenizationClient.exited += 1
 
     async def preflight(self) -> None:
         return None
@@ -105,6 +122,13 @@ class ConfiguredTokenizationClient(FakeTokenizationClient):
                 + tuple(ord(character) for character in content)
             )
         return special + tuple(ord(character) for character in content)
+
+
+class EmptyPrefixSpecialTokenizationClient(FakeTokenizationClient):
+    async def tokenize(self, content: str, *, add_special: bool) -> tuple[int, ...]:
+        if content == "" and add_special:
+            return (-1,)
+        return await super().tokenize(content, add_special=add_special)
 
 
 class FakeEmbeddingClient:
@@ -150,6 +174,12 @@ class RecordingEmbeddingClient(FakeEmbeddingClient):
     ) -> tuple[EmbeddedUnit, ...]:
         self.calls.append(units)
         return await super().embed_all(units)
+
+
+@pytest.fixture(autouse=True)
+def reset_fake_tokenization_lifecycle() -> None:
+    FakeTokenizationClient.entered = 0
+    FakeTokenizationClient.exited = 0
 
 
 def build_arguments(output: Path) -> list[str]:
@@ -204,6 +234,8 @@ def test_build_writes_local_artifact_from_resolved_repository(
     )
 
     assert result.exit_code == 0, result.output
+    assert FakeTokenizationClient.entered == 1
+    assert FakeTokenizationClient.exited == 1
     assert {path.name for path in output.iterdir()} == {
         "manifest.json",
         "numpy-2.3.0.tar.zst",
@@ -413,6 +445,7 @@ def test_build_rejects_invalid_preflight_before_external_clients(
     assert result.exit_code != 0
     assert message in result.output
     assert not isinstance(result.exception, AssertionError)
+    assert FakeTokenizationClient.entered == 0
 
 
 @pytest.mark.parametrize(
@@ -439,6 +472,7 @@ def test_build_rejects_invalid_token_options_before_external_clients(
 
     assert result.exit_code != 0
     assert message in result.output
+    assert FakeTokenizationClient.entered == 0
 
 
 def test_build_rejects_overlap_equal_to_chunk_size_before_external_clients(
@@ -457,6 +491,7 @@ def test_build_rejects_overlap_equal_to_chunk_size_before_external_clients(
 
     assert result.exit_code != 0
     assert "must be smaller than chunk size" in result.output
+    assert FakeTokenizationClient.entered == 0
 
 
 def test_build_rejects_existing_output_before_external_clients(
@@ -475,6 +510,7 @@ def test_build_rejects_existing_output_before_external_clients(
     assert result.exit_code != 0
     assert "must not already exist" in result.output
     assert not isinstance(result.exception, AssertionError)
+    assert FakeTokenizationClient.entered == 0
 
 
 @pytest.mark.parametrize(
@@ -522,6 +558,8 @@ def test_build_token_preflight_fails_before_github_and_publication(
     assert result.exit_code != 0
     assert "token endpoint /detokenize failed" in result.output
     assert not isinstance(result.exception, AssertionError)
+    assert FakeTokenizationClient.entered == 1
+    assert FakeTokenizationClient.exited == 1
     assert not output.exists()
 
 
@@ -531,8 +569,12 @@ def test_build_rejects_a_prefix_without_source_room_before_github(
     def unexpected_github_client() -> None:
         raise AssertionError("prefix-only token budget constructed a GitHub client")
 
+    def unexpected_embedding(*_args, **_kwargs) -> None:
+        raise AssertionError("prefix-only token budget reached the embedding client")
+
     monkeypatch.setattr(cli, "TokenizationClient", FakeTokenizationClient)
     monkeypatch.setattr(cli, "GitHubClient", unexpected_github_client)
+    monkeypatch.setattr(cli, "EmbeddingClient", unexpected_embedding)
     output = tmp_path / "output"
 
     result = CliRunner().invoke(
@@ -545,4 +587,30 @@ def test_build_rejects_a_prefix_without_source_room_before_github(
     assert "document prefix" in result.output
     assert "source tokens" in result.output
     assert not isinstance(result.exception, AssertionError)
+    assert FakeTokenizationClient.entered == 1
+    assert FakeTokenizationClient.exited == 1
+    assert not output.exists()
+
+
+def test_build_counts_empty_prefix_special_tokens_before_github(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def unexpected_github_client() -> None:
+        raise AssertionError("empty-prefix token budget constructed a GitHub client")
+
+    monkeypatch.setattr(cli, "TokenizationClient", EmptyPrefixSpecialTokenizationClient)
+    monkeypatch.setattr(cli, "GitHubClient", unexpected_github_client)
+    output = tmp_path / "output"
+
+    result = CliRunner().invoke(
+        cli.app,
+        build_arguments(output) + ["--chunk-size-tokens", "1"],
+    )
+
+    assert result.exit_code != 0
+    assert "document prefix" in result.output
+    assert "source tokens" in result.output
+    assert not isinstance(result.exception, AssertionError)
+    assert FakeTokenizationClient.entered == 1
+    assert FakeTokenizationClient.exited == 1
     assert not output.exists()

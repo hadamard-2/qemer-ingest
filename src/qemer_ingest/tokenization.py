@@ -1,3 +1,6 @@
+from types import TracebackType
+from typing import Self
+
 import httpx
 
 
@@ -11,6 +14,24 @@ class TokenizationClient:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._transport = transport
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> Self:
+        if self._client is not None:
+            raise RuntimeError("tokenization client is already open")
+        self._client = httpx.AsyncClient(transport=self._transport)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        client = self._client
+        self._client = None
+        if client is not None:
+            await client.aclose()
 
     async def preflight(self) -> None:
         await self.tokenize("", add_special=True)
@@ -41,9 +62,13 @@ class TokenizationClient:
         return content
 
     async def _post(self, path: str, payload: dict[str, object]) -> httpx.Response:
+        client = self._client
+        if client is None:
+            raise RuntimeError(
+                "tokenization client must be used as an async context manager"
+            )
         try:
-            async with httpx.AsyncClient(transport=self._transport) as client:
-                response = await client.post(f"{self.base_url}{path}", json=payload)
+            response = await client.post(f"{self.base_url}{path}", json=payload)
             response.raise_for_status()
         except httpx.HTTPError as error:
             raise ValueError(f"token endpoint {path} failed: {error}") from error

@@ -54,6 +54,8 @@ qemer-ingest build https://github.com/numpy/numpy --ref v2.3.0 --library numpy -
 
 `build` requires `/tokenize` and `/detokenize` at the embedding URL, preserves Markdown/RST/TXT structure first, then splits prose or code units against the final embedding payload token budget. The default is `2048` tokens with zero token overlap. Set `--chunk-overlap-tokens` to repeat trailing source tokens at the start of the next chunk; it must be smaller than `--chunk-size-tokens`. Use `--document-prefix` to prepend exact caller-selected text only to embedding requests; its default is the empty string. Corpus text remains source-oriented and does not include the prefix.
 
+Chunk selection is deterministic and near-maximum: qemer-ingest starts with a budget-sized raw-token window and performs at most eight refinement checks plus a one-token fallback, while `/tokenize` remains authoritative for every accepted prefixed payload. It does not exhaustively search for the mathematically longest fitting slice.
+
 ```sh
 qemer-ingest build https://github.com/numpy/numpy --ref v2.5.2 --library numpy --version 2.5.2 --embedding-url http://127.0.0.1:8080 --embedding-model nomic-embed-text-v1.5 --embedding-dim 768 --chunk-size-tokens 2048 --chunk-overlap-tokens 0 --document-prefix 'search_document: ' --output ./qemer-corpora/numpy-2.5.2
 ```
