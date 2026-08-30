@@ -1,85 +1,111 @@
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from qemer_ingest.models import DocumentUnit
+from qemer_ingest.tokenization import TokenizationClient
 
-_SEPARATORS = ("\n\n", "\n", " ", "")
 
-
-def chunk_units(
-    units: tuple[DocumentUnit, ...], *, chunk_size: int, chunk_overlap: int
+async def chunk_units(
+    units: tuple[DocumentUnit, ...],
+    *,
+    tokenizer: TokenizationClient,
+    chunk_size_tokens: int,
+    chunk_overlap_tokens: int,
+    document_prefix: str,
 ) -> tuple[DocumentUnit, ...]:
-    _validate_options(chunk_size, chunk_overlap)
-    splitter = RecursiveCharacterTextSplitter(
-        separators=list(_SEPARATORS),
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
+    _validate_options(chunk_size_tokens, chunk_overlap_tokens)
+
     output: list[DocumentUnit] = []
     for unit in units:
-        output.extend(_chunk_unit(unit, splitter, chunk_size, chunk_overlap))
+        try:
+            chunks = await _chunk_unit(
+                unit,
+                tokenizer=tokenizer,
+                chunk_size_tokens=chunk_size_tokens,
+                chunk_overlap_tokens=chunk_overlap_tokens,
+                document_prefix=document_prefix,
+            )
+        except ValueError as error:
+            raise ValueError(f"{error} for {unit.source_url}") from error
+        output.extend(chunks)
     return tuple(output)
 
 
-def _validate_options(chunk_size: int, chunk_overlap: int) -> None:
-    if chunk_size <= 0:
-        raise ValueError("chunk size must be positive")
-    if chunk_overlap < 0 or chunk_overlap >= chunk_size:
+def _validate_options(chunk_size_tokens: int, chunk_overlap_tokens: int) -> None:
+    if chunk_size_tokens <= 0:
+        raise ValueError("token size must be positive")
+    if chunk_overlap_tokens < 0 or chunk_overlap_tokens >= chunk_size_tokens:
         raise ValueError(
-            "chunk overlap must be non-negative and smaller than chunk size"
+            "token overlap must be non-negative and smaller than token size"
         )
 
 
-def _chunk_unit(
+async def _chunk_unit(
     unit: DocumentUnit,
-    splitter: RecursiveCharacterTextSplitter,
-    chunk_size: int,
-    chunk_overlap: int,
+    *,
+    tokenizer: TokenizationClient,
+    chunk_size_tokens: int,
+    chunk_overlap_tokens: int,
+    document_prefix: str,
 ) -> tuple[DocumentUnit, ...]:
-    if len(unit.text) <= chunk_size:
+    payload_tokens = await tokenizer.tokenize(
+        document_prefix + unit.text, add_special=True
+    )
+    if len(payload_tokens) <= chunk_size_tokens:
         return (unit,)
 
-    split_texts = tuple(text for text in splitter.split_text(unit.text) if text.strip())
-    texts = _enforce_overlap(split_texts, chunk_size, chunk_overlap)
-    return tuple(
-        DocumentUnit(
-            f"{unit.snippet_id}-{unit.kind}-{ordinal:03d}",
+    prefix_tokens = await tokenizer.tokenize(document_prefix, add_special=True)
+    if len(prefix_tokens) >= chunk_size_tokens:
+        raise ValueError("document prefix leaves no room for source tokens")
+
+    source_tokens = await tokenizer.tokenize(unit.text, add_special=False)
+    children: list[DocumentUnit] = []
+    start = 0
+    while start < len(source_tokens):
+        end, text = await _longest_fitting_slice(
+            source_tokens,
+            start=start,
+            tokenizer=tokenizer,
+            chunk_size_tokens=chunk_size_tokens,
+            document_prefix=document_prefix,
+        )
+        if end == start:
+            raise ValueError("token budget leaves no room for source tokens")
+
+        child = DocumentUnit(
+            f"{unit.snippet_id}-{unit.kind}-{len(children) + 1:03d}",
             unit.kind,
             unit.title,
             unit.source_url,
             text,
         )
-        for ordinal, text in enumerate(texts, start=1)
-    )
+        final_tokens = await tokenizer.tokenize(
+            document_prefix + child.text, add_special=True
+        )
+        if len(final_tokens) > chunk_size_tokens:
+            raise ValueError("token slice exceeds token size")
+        children.append(child)
+
+        if end == len(source_tokens):
+            break
+        next_start = end - chunk_overlap_tokens
+        if next_start <= start:
+            raise ValueError("token overlap leaves no room for new source tokens")
+        start = next_start
+
+    return tuple(children)
 
 
-def _enforce_overlap(
-    texts: tuple[str, ...], chunk_size: int, chunk_overlap: int
-) -> tuple[str, ...]:
-    if chunk_overlap == 0 or not texts:
-        return texts
-
-    pending = list(texts)
-    first = pending.pop(0)
-    while len(first) < chunk_overlap and pending:
-        text = pending.pop(0)
-        available = chunk_size - len(first)
-        first += text[:available]
-        if len(text) > available:
-            pending.insert(0, text[available:])
-
-    output = [first]
-    for text in pending:
-        required_prefix = output[-1][-chunk_overlap:]
-        if text.startswith(required_prefix):
-            output.append(text)
-            continue
-
-        remaining = text
-        while remaining:
-            required_prefix = output[-1][-chunk_overlap:]
-            payload_size = chunk_size - len(required_prefix)
-            payload = remaining[:payload_size]
-            output.append(required_prefix + payload)
-            remaining = remaining[payload_size:]
-
-    return tuple(output)
+async def _longest_fitting_slice(
+    source_tokens: tuple[int, ...],
+    *,
+    start: int,
+    tokenizer: TokenizationClient,
+    chunk_size_tokens: int,
+    document_prefix: str,
+) -> tuple[int, str]:
+    for end in range(len(source_tokens), start, -1):
+        text = await tokenizer.detokenize(source_tokens[start:end])
+        payload_tokens = await tokenizer.tokenize(
+            document_prefix + text, add_special=True
+        )
+        if len(payload_tokens) <= chunk_size_tokens:
+            return end, text
+    return start, ""

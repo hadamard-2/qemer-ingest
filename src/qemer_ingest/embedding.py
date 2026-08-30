@@ -11,6 +11,7 @@ class EmbeddingClient:
         base_url: str,
         model: str,
         dimension: int,
+        document_prefix: str = "",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if dimension <= 0:
@@ -18,6 +19,7 @@ class EmbeddingClient:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.dimension = dimension
+        self.document_prefix = document_prefix
         self._transport = transport
 
     async def embed_all(
@@ -36,7 +38,7 @@ class EmbeddingClient:
         try:
             response = await client.post(
                 f"{self.base_url}/v1/embeddings",
-                json={"input": unit.text, "model": self.model},
+                json={"input": self.document_prefix + unit.text, "model": self.model},
             )
             response.raise_for_status()
         except httpx.HTTPError as error:

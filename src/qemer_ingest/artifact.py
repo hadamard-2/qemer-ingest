@@ -135,8 +135,9 @@ def _report_payload(report: BuildReport) -> dict[str, object]:
         ],
         "prose_rows": report.prose_rows,
         "code_rows": report.code_rows,
-        "chunk_size": report.chunk_size,
-        "chunk_overlap": report.chunk_overlap,
+        "chunk_size_tokens": report.chunk_size_tokens,
+        "chunk_overlap_tokens": report.chunk_overlap_tokens,
+        "document_prefix": report.document_prefix,
     }
 
 

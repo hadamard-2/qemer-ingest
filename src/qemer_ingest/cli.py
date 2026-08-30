@@ -12,12 +12,14 @@ from qemer_ingest.embedding import EmbeddingClient
 from qemer_ingest.github import GitHubClient
 from qemer_ingest.models import BuildReport
 from qemer_ingest.parsing import parse_document_with_report
+from qemer_ingest.tokenization import TokenizationClient
 
 app = typer.Typer(no_args_is_help=True)
 _INCLUDE_OPTION = typer.Option([], "--include")
 _OUTPUT_OPTION = typer.Option(..., "--output")
-_CHUNK_SIZE_OPTION = typer.Option(8000, "--chunk-size")
-_CHUNK_OVERLAP_OPTION = typer.Option(0, "--chunk-overlap")
+_CHUNK_SIZE_TOKENS_OPTION = typer.Option(2048, "--chunk-size-tokens")
+_CHUNK_OVERLAP_TOKENS_OPTION = typer.Option(0, "--chunk-overlap-tokens")
+_DOCUMENT_PREFIX_OPTION = typer.Option("", "--document-prefix")
 
 
 @app.callback()
@@ -62,8 +64,9 @@ def build(
     embedding_dim: int = typer.Option(..., "--embedding-dim"),
     output: Path = _OUTPUT_OPTION,
     include: list[str] = _INCLUDE_OPTION,
-    chunk_size: int = _CHUNK_SIZE_OPTION,
-    chunk_overlap: int = _CHUNK_OVERLAP_OPTION,
+    chunk_size_tokens: int = _CHUNK_SIZE_TOKENS_OPTION,
+    chunk_overlap_tokens: int = _CHUNK_OVERLAP_TOKENS_OPTION,
+    document_prefix: str = _DOCUMENT_PREFIX_OPTION,
 ) -> None:
     """Build a local corpus artifact from a resolved repository revision."""
     if not library.strip():
@@ -72,16 +75,35 @@ def build(
         raise typer.BadParameter("must not be empty", param_hint="--version")
     if embedding_dim <= 0:
         raise typer.BadParameter("must be positive", param_hint="--embedding-dim")
-    if chunk_size <= 0:
-        raise typer.BadParameter("must be positive", param_hint="--chunk-size")
-    if chunk_overlap < 0:
-        raise typer.BadParameter("must be non-negative", param_hint="--chunk-overlap")
-    if chunk_overlap >= chunk_size:
+    if chunk_size_tokens <= 0:
+        raise typer.BadParameter("must be positive", param_hint="--chunk-size-tokens")
+    if chunk_overlap_tokens < 0:
         raise typer.BadParameter(
-            "must be smaller than chunk size", param_hint="--chunk-overlap"
+            "must be non-negative", param_hint="--chunk-overlap-tokens"
+        )
+    if chunk_overlap_tokens >= chunk_size_tokens:
+        raise typer.BadParameter(
+            "must be smaller than chunk size in tokens",
+            param_hint="--chunk-overlap-tokens",
         )
     if os.path.lexists(output):
         raise typer.BadParameter("must not already exist", param_hint="--output")
+
+    tokenizer = TokenizationClient(embedding_url)
+    try:
+        asyncio.run(tokenizer.preflight())
+        prefix_tokens = (
+            asyncio.run(tokenizer.tokenize(document_prefix, add_special=True))
+            if document_prefix
+            else ()
+        )
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--embedding-url") from error
+    if len(prefix_tokens) >= chunk_size_tokens:
+        raise typer.BadParameter(
+            "document prefix leaves no room for source tokens",
+            param_hint="--document-prefix",
+        )
 
     github = GitHubClient()
     source = asyncio.run(github.resolve(repository_url, ref))
@@ -106,15 +128,24 @@ def build(
         parsed_units = tuple(
             unit for parsed in parsed_documents for unit in parsed.units
         )
-        units = chunk_units(
-            parsed_units,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+        units = asyncio.run(
+            chunk_units(
+                parsed_units,
+                tokenizer=tokenizer,
+                chunk_size_tokens=chunk_size_tokens,
+                chunk_overlap_tokens=chunk_overlap_tokens,
+                document_prefix=document_prefix,
+            )
         )
         if not units:
             raise typer.BadParameter("selected documentation produced no rows")
 
-        embedding = EmbeddingClient(embedding_url, embedding_model, embedding_dim)
+        embedding = EmbeddingClient(
+            embedding_url,
+            embedding_model,
+            embedding_dim,
+            document_prefix=document_prefix,
+        )
         embedded = asyncio.run(embedding.embed_all(units))
         report = BuildReport(
             repository_url=source.url,
@@ -128,8 +159,9 @@ def build(
             ),
             prose_rows=sum(unit.kind == "prose" for unit in units),
             code_rows=sum(unit.kind == "code" for unit in units),
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+            chunk_size_tokens=chunk_size_tokens,
+            chunk_overlap_tokens=chunk_overlap_tokens,
+            document_prefix=document_prefix,
         )
         build_artifact(
             output,

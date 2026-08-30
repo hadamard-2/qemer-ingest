@@ -37,8 +37,9 @@ class BuildReport:
     parser_skips: tuple[ParserSkip, ...]
     prose_rows: int
     code_rows: int
-    chunk_size: int
-    chunk_overlap: int
+    chunk_size_tokens: int
+    chunk_overlap_tokens: int
+    document_prefix: str
 
 
 @dataclass(frozen=True, slots=True)

@@ -48,8 +48,9 @@ def make_report() -> BuildReport:
         parser_skips=(),
         prose_rows=1,
         code_rows=1,
-        chunk_size=8000,
-        chunk_overlap=0,
+        chunk_size_tokens=2048,
+        chunk_overlap_tokens=0,
+        document_prefix="search_document: ",
     )
 
 
@@ -91,6 +92,14 @@ def test_build_artifact_writes_the_local_qemer_contract(tmp_path: Path) -> None:
             }
         ]
     }
+    build_report = json.loads(
+        (output / "build-report.json").read_text(encoding="utf-8")
+    )
+    assert build_report["chunk_size_tokens"] == 2048
+    assert build_report["chunk_overlap_tokens"] == 0
+    assert build_report["document_prefix"] == "search_document: "
+    assert "chunk_size" not in build_report
+    assert "chunk_overlap" not in build_report
 
     tar_bytes = zstd.ZstdDecompressor().decompress(archive.read_bytes())
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tar:

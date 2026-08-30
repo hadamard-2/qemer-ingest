@@ -56,6 +56,40 @@ async def test_embed_all_posts_one_request_per_unit_and_preserves_order() -> Non
 
 
 @pytest.mark.asyncio
+async def test_embed_all_prefixes_requests_without_changing_document_units() -> None:
+    from qemer_ingest.embedding import EmbeddingClient
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"embedding": [1.0, 2.0, 3.0]}]})
+
+    units = make_units()
+    client = EmbeddingClient(
+        "http://embeddings.test/",
+        "nomic-embed-text-v1.5",
+        3,
+        document_prefix="search_document: ",
+        transport=httpx.MockTransport(handler),
+    )
+
+    embedded = await client.embed_all(units)
+
+    assert [json.loads(request.content) for request in requests] == [
+        {
+            "input": "search_document: NumPy is for arrays.",
+            "model": "nomic-embed-text-v1.5",
+        },
+        {
+            "input": "search_document: import numpy as np",
+            "model": "nomic-embed-text-v1.5",
+        },
+    ]
+    assert [item.unit for item in embedded] == list(units)
+
+
+@pytest.mark.asyncio
 async def test_embed_all_rejects_an_empty_response_with_the_source_url() -> None:
     from qemer_ingest.embedding import EmbeddingClient
 

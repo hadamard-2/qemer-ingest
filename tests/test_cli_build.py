@@ -76,11 +76,49 @@ class NoUnitsGitHubClient(FakeGitHubClient):
         return repository_root
 
 
+class FakeTokenizationClient:
+    def __init__(self, base_url: str) -> None:
+        assert base_url == "http://127.0.0.1:8080"
+
+    async def preflight(self) -> None:
+        return None
+
+    async def tokenize(self, content: str, *, add_special: bool) -> tuple[int, ...]:
+        special = (-1,) if add_special else ()
+        return special + tuple(ord(character) for character in content)
+
+    async def detokenize(self, tokens: tuple[int, ...]) -> str:
+        return "".join(chr(token) for token in tokens)
+
+
+class ConfiguredTokenizationClient(FakeTokenizationClient):
+    prefix = "search_document: "
+    prefix_token = (0x110000,)
+
+    async def tokenize(self, content: str, *, add_special: bool) -> tuple[int, ...]:
+        special = (-1,) if add_special else ()
+        if content.startswith(self.prefix):
+            content = content.removeprefix(self.prefix)
+            return (
+                special
+                + self.prefix_token
+                + tuple(ord(character) for character in content)
+            )
+        return special + tuple(ord(character) for character in content)
+
+
 class FakeEmbeddingClient:
-    def __init__(self, base_url: str, model: str, dimension: int) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        dimension: int,
+        document_prefix: str = "",
+    ) -> None:
         assert base_url == "http://127.0.0.1:8080"
         assert model == "nomic-embed-text-v1.5"
         assert dimension == 3
+        assert document_prefix == ""
 
     async def embed_all(
         self, units: tuple[DocumentUnit, ...]
@@ -90,6 +128,22 @@ class FakeEmbeddingClient:
 
 class RecordingEmbeddingClient(FakeEmbeddingClient):
     calls: ClassVar[list[tuple[DocumentUnit, ...]]] = []
+    prefixes: ClassVar[list[str]] = []
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        dimension: int,
+        document_prefix: str = "",
+    ) -> None:
+        self.prefixes.append(document_prefix)
+        if document_prefix:
+            assert base_url == "http://127.0.0.1:8080"
+            assert model == "nomic-embed-text-v1.5"
+            assert dimension == 3
+        else:
+            super().__init__(base_url, model, dimension, document_prefix)
 
     async def embed_all(
         self, units: tuple[DocumentUnit, ...]
@@ -123,6 +177,7 @@ def test_build_writes_local_artifact_from_resolved_repository(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(cli, "GitHubClient", FakeGitHubClient)
+    monkeypatch.setattr(cli, "TokenizationClient", FakeTokenizationClient)
     monkeypatch.setattr(cli, "EmbeddingClient", FakeEmbeddingClient, raising=False)
     output = tmp_path / "numpy-2.3.0"
 
@@ -165,8 +220,9 @@ def test_build_writes_local_artifact_from_resolved_repository(
         "parser_skips": [],
         "prose_rows": 1,
         "code_rows": 0,
-        "chunk_size": 8000,
-        "chunk_overlap": 0,
+        "chunk_size_tokens": 2048,
+        "chunk_overlap_tokens": 0,
+        "document_prefix": "",
     }
 
 
@@ -174,6 +230,7 @@ def test_build_report_records_discovery_and_parser_decisions(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(cli, "GitHubClient", ReportingGitHubClient)
+    monkeypatch.setattr(cli, "TokenizationClient", FakeTokenizationClient)
     monkeypatch.setattr(cli, "EmbeddingClient", FakeEmbeddingClient)
     output = tmp_path / "numpy-report"
 
@@ -223,8 +280,9 @@ def test_build_report_records_discovery_and_parser_decisions(
         ],
         "prose_rows": 2,
         "code_rows": 0,
-        "chunk_size": 8000,
-        "chunk_overlap": 0,
+        "chunk_size_tokens": 2048,
+        "chunk_overlap_tokens": 0,
+        "document_prefix": "",
     }
 
 
@@ -232,8 +290,10 @@ def test_build_uses_repository_relative_identity_across_extraction_roots(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(cli, "GitHubClient", FakeGitHubClient)
+    monkeypatch.setattr(cli, "TokenizationClient", FakeTokenizationClient)
     monkeypatch.setattr(cli, "EmbeddingClient", RecordingEmbeddingClient)
     RecordingEmbeddingClient.calls.clear()
+    RecordingEmbeddingClient.prefixes.clear()
 
     for ordinal in (1, 2):
         output = tmp_path / f"output-{ordinal}"
@@ -269,17 +329,27 @@ def test_build_uses_repository_relative_identity_across_extraction_roots(
     assert second.source_url == first.source_url
 
 
-def test_build_chunks_before_embedding_and_records_the_requested_policy(
+def test_build_chunks_before_embedding_and_records_the_token_policy(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(cli, "GitHubClient", LongReadmeGitHubClient)
+    monkeypatch.setattr(cli, "TokenizationClient", ConfiguredTokenizationClient)
     monkeypatch.setattr(cli, "EmbeddingClient", RecordingEmbeddingClient)
     RecordingEmbeddingClient.calls.clear()
+    RecordingEmbeddingClient.prefixes.clear()
     output = tmp_path / "numpy-chunked"
 
     result = CliRunner().invoke(
         cli.app,
-        build_arguments(output) + ["--chunk-size", "8", "--chunk-overlap", "2"],
+        build_arguments(output)
+        + [
+            "--chunk-size-tokens",
+            "8",
+            "--chunk-overlap-tokens",
+            "2",
+            "--document-prefix",
+            "search_document: ",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -291,18 +361,27 @@ def test_build_chunks_before_embedding_and_records_the_requested_policy(
         f"{parent_id}-prose-001",
         f"{parent_id}-prose-002",
         f"{parent_id}-prose-003",
+        f"{parent_id}-prose-004",
+        f"{parent_id}-prose-005",
     ]
-    assert json.loads((output / "build-report.json").read_text())["chunk_size"] == 8
-    assert json.loads((output / "build-report.json").read_text())["chunk_overlap"] == 2
+    report = json.loads((output / "build-report.json").read_text())
+    assert report["chunk_size_tokens"] == 8
+    assert report["chunk_overlap_tokens"] == 2
+    assert report["document_prefix"] == "search_document: "
+    assert RecordingEmbeddingClient.prefixes == ["search_document: "]
+    assert all("search_document: " not in unit.text for unit in embedded)
 
 
-def test_build_help_describes_overflow_chunking_options() -> None:
+def test_build_help_describes_token_chunking_options() -> None:
     result = CliRunner().invoke(cli.app, ["build", "--help"])
     assert result.exit_code == 0
-    assert "--chunk-size" in result.output
-    assert "--chunk-overlap" in result.output
-    assert "8000" in result.output
+    assert "--chunk-size-tokens" in result.output
+    assert "--chunk-overlap-tokens" in result.output
+    assert "--document-prefix" in result.output
+    assert "2048" in result.output
     assert "0" in result.output
+    assert "--chunk-size " not in result.output
+    assert "--chunk-overlap " not in result.output
 
 
 @pytest.mark.parametrize(
@@ -323,6 +402,7 @@ def test_build_rejects_invalid_preflight_before_external_clients(
     def unexpected_client():
         raise AssertionError("invalid preflight reached an external client")
 
+    monkeypatch.setattr(cli, "TokenizationClient", unexpected_client)
     monkeypatch.setattr(cli, "GitHubClient", unexpected_client)
     arguments = build_arguments(tmp_path / "output")
     option_index = arguments.index(invalid_option)
@@ -338,11 +418,11 @@ def test_build_rejects_invalid_preflight_before_external_clients(
 @pytest.mark.parametrize(
     ("option", "value", "message"),
     (
-        ("--chunk-size", "0", "must be positive"),
-        ("--chunk-overlap", "-1", "must be non-negative"),
+        ("--chunk-size-tokens", "0", "must be positive"),
+        ("--chunk-overlap-tokens", "-1", "must be non-negative"),
     ),
 )
-def test_build_rejects_invalid_chunk_options_before_external_clients(
+def test_build_rejects_invalid_token_options_before_external_clients(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     option: str,
@@ -352,6 +432,7 @@ def test_build_rejects_invalid_chunk_options_before_external_clients(
     def unexpected_client() -> None:
         raise AssertionError("invalid chunk option constructed a GitHub client")
 
+    monkeypatch.setattr(cli, "TokenizationClient", unexpected_client)
     monkeypatch.setattr(cli, "GitHubClient", unexpected_client)
     arguments = build_arguments(tmp_path / "output") + [option, value]
     result = CliRunner().invoke(cli.app, arguments)
@@ -366,11 +447,12 @@ def test_build_rejects_overlap_equal_to_chunk_size_before_external_clients(
     def unexpected_client() -> None:
         raise AssertionError("invalid chunk option constructed a GitHub client")
 
+    monkeypatch.setattr(cli, "TokenizationClient", unexpected_client)
     monkeypatch.setattr(cli, "GitHubClient", unexpected_client)
     result = CliRunner().invoke(
         cli.app,
         build_arguments(tmp_path / "output")
-        + ["--chunk-size", "8", "--chunk-overlap", "8"],
+        + ["--chunk-size-tokens", "8", "--chunk-overlap-tokens", "8"],
     )
 
     assert result.exit_code != 0
@@ -383,6 +465,7 @@ def test_build_rejects_existing_output_before_external_clients(
     def unexpected_client():
         raise AssertionError("existing output reached an external client")
 
+    monkeypatch.setattr(cli, "TokenizationClient", unexpected_client)
     monkeypatch.setattr(cli, "GitHubClient", unexpected_client)
     output = tmp_path / "output"
     output.mkdir()
@@ -408,6 +491,7 @@ def test_build_fails_before_embedding_when_selection_cannot_emit_rows(
         raise AssertionError("an empty build reached the embedding client")
 
     monkeypatch.setattr(cli, "GitHubClient", github_client)
+    monkeypatch.setattr(cli, "TokenizationClient", FakeTokenizationClient)
     monkeypatch.setattr(cli, "EmbeddingClient", unexpected_embedding)
     output = tmp_path / "output"
 
@@ -415,5 +499,50 @@ def test_build_fails_before_embedding_when_selection_cannot_emit_rows(
 
     assert result.exit_code != 0
     assert message in result.output
+    assert not isinstance(result.exception, AssertionError)
+    assert not output.exists()
+
+
+def test_build_token_preflight_fails_before_github_and_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FailingTokenizationClient(FakeTokenizationClient):
+        async def preflight(self) -> None:
+            raise ValueError("token endpoint /detokenize failed")
+
+    def unexpected_github_client() -> None:
+        raise AssertionError("failed token preflight constructed a GitHub client")
+
+    monkeypatch.setattr(cli, "TokenizationClient", FailingTokenizationClient)
+    monkeypatch.setattr(cli, "GitHubClient", unexpected_github_client)
+    output = tmp_path / "output"
+
+    result = CliRunner().invoke(cli.app, build_arguments(output))
+
+    assert result.exit_code != 0
+    assert "token endpoint /detokenize failed" in result.output
+    assert not isinstance(result.exception, AssertionError)
+    assert not output.exists()
+
+
+def test_build_rejects_a_prefix_without_source_room_before_github(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def unexpected_github_client() -> None:
+        raise AssertionError("prefix-only token budget constructed a GitHub client")
+
+    monkeypatch.setattr(cli, "TokenizationClient", FakeTokenizationClient)
+    monkeypatch.setattr(cli, "GitHubClient", unexpected_github_client)
+    output = tmp_path / "output"
+
+    result = CliRunner().invoke(
+        cli.app,
+        build_arguments(output)
+        + ["--chunk-size-tokens", "8", "--document-prefix", "abcdefg"],
+    )
+
+    assert result.exit_code != 0
+    assert "document prefix" in result.output
+    assert "source tokens" in result.output
     assert not isinstance(result.exception, AssertionError)
     assert not output.exists()
