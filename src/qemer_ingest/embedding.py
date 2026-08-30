@@ -2,6 +2,8 @@ import httpx
 
 from qemer_ingest.models import DocumentUnit, EmbeddedUnit
 
+_EMBEDDING_TIMEOUT_SECONDS = 60.0
+
 
 class EmbeddingClient:
     """Embed document units through an already-running compatible endpoint."""
@@ -11,6 +13,7 @@ class EmbeddingClient:
         base_url: str,
         model: str,
         dimension: int,
+        document_prefix: str = "",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if dimension <= 0:
@@ -18,13 +21,16 @@ class EmbeddingClient:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.dimension = dimension
+        self.document_prefix = document_prefix
         self._transport = transport
 
     async def embed_all(
         self, units: tuple[DocumentUnit, ...]
     ) -> tuple[EmbeddedUnit, ...]:
         embedded: list[EmbeddedUnit] = []
-        async with httpx.AsyncClient(transport=self._transport) as client:
+        async with httpx.AsyncClient(
+            transport=self._transport, timeout=_EMBEDDING_TIMEOUT_SECONDS
+        ) as client:
             for unit in units:
                 vector = await self._embed_one(client, unit)
                 embedded.append(EmbeddedUnit(unit, vector))
@@ -36,7 +42,7 @@ class EmbeddingClient:
         try:
             response = await client.post(
                 f"{self.base_url}/v1/embeddings",
-                json={"input": unit.text, "model": self.model},
+                json={"input": self.document_prefix + unit.text, "model": self.model},
             )
             response.raise_for_status()
         except httpx.HTTPError as error:
