@@ -65,7 +65,9 @@ from qemer_ingest.models import DocumentUnit
 
 
 def unit(kind: str = "prose", text: str = "short text") -> DocumentUnit:
-    return DocumentUnit("numpy-2.3-abc", kind, "Arrays", "https://example.test/README.md", text)
+    return DocumentUnit(
+        "numpy-2.3-abc", kind, "Arrays", "https://example.test/README.md", text
+    )
 
 
 def test_chunk_units_keeps_a_unit_at_or_below_the_limit() -> None:
@@ -74,11 +76,34 @@ def test_chunk_units_keeps_a_unit_at_or_below_the_limit() -> None:
 
 
 def test_chunk_units_splits_oversized_units_with_stable_child_metadata() -> None:
-    chunks = chunk_units((unit(text="abcdefghijklmnopqrst"),), chunk_size=8, chunk_overlap=2)
-    assert [(chunk.snippet_id, chunk.kind, chunk.title, chunk.source_url, chunk.text) for chunk in chunks] == [
-        ("numpy-2.3-abc-prose-001", "prose", "Arrays", "https://example.test/README.md", "abcdefgh"),
-        ("numpy-2.3-abc-prose-002", "prose", "Arrays", "https://example.test/README.md", "ghijklmn"),
-        ("numpy-2.3-abc-prose-003", "prose", "Arrays", "https://example.test/README.md", "mnop"),
+    chunks = chunk_units(
+        (unit(text="abcdefghijklmnopqrst"),), chunk_size=8, chunk_overlap=2
+    )
+    assert [
+        (chunk.snippet_id, chunk.kind, chunk.title, chunk.source_url, chunk.text)
+        for chunk in chunks
+    ] == [
+        (
+            "numpy-2.3-abc-prose-001",
+            "prose",
+            "Arrays",
+            "https://example.test/README.md",
+            "abcdefgh",
+        ),
+        (
+            "numpy-2.3-abc-prose-002",
+            "prose",
+            "Arrays",
+            "https://example.test/README.md",
+            "ghijklmn",
+        ),
+        (
+            "numpy-2.3-abc-prose-003",
+            "prose",
+            "Arrays",
+            "https://example.test/README.md",
+            "mnop",
+        ),
     ]
 ```
 
@@ -163,7 +188,9 @@ class LongReadmeGitHubClient(FakeGitHubClient):
         return repository_root
 
 
-def test_build_chunks_before_embedding_and_records_the_requested_policy(monkeypatch, tmp_path: Path) -> None:
+def test_build_chunks_before_embedding_and_records_the_requested_policy(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(cli, "GitHubClient", LongReadmeGitHubClient)
     monkeypatch.setattr(cli, "EmbeddingClient", RecordingEmbeddingClient)
     RecordingEmbeddingClient.calls.clear()
@@ -176,7 +203,7 @@ def test_build_chunks_before_embedding_and_records_the_requested_policy(monkeypa
 
     assert result.exit_code == 0, result.output
     embedded = RecordingEmbeddingClient.calls[0]
-    digest = sha256(("numpy\0" "2.3.0\0" "README.md\0" "1").encode()).hexdigest()[:16]
+    digest = sha256(("numpy\02.3.0\0README.md\01").encode()).hexdigest()[:16]
     parent_id = f"numpy-2.3.0-{digest}"
     assert [unit.snippet_id for unit in embedded] == [
         f"{parent_id}-prose-001",
