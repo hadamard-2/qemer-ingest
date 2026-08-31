@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Require the default branch
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Releases must be dispatched from main; received $GITHUB_REF." >&2
+            exit 1
+          fi
+
+      - name: Check out the release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.6"
+          enable-cache: true
+
+      - name: Install the locked development environment
+        run: uv sync --locked --dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Read release metadata
+        id: release
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+
+          with open("pyproject.toml", "rb") as file:
+              version = tomllib.load(file)["project"]["version"]
+
+          if not isinstance(version, str) or not version:
+              raise ValueError("project.version must be a non-empty string")
+
+          print(f"version={version}")
+          print(f"tag=v{version}")
+          PY
+
+      - name: Reject an existing tag or release
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG"; then
+            echo "Tag $TAG already exists." >&2
+            exit 1
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists." >&2
+            exit 1
+          fi
+
+      - name: Build distributions
+        run: uv build --no-sources
+
+      - name: Smoke test the wheel
+        run: uv run --isolated --no-project --with dist/*.whl qemer-ingest --help
+
+      - name: Smoke test the source distribution
+        run: uv run --isolated --no-project --with dist/*.tar.gz qemer-ingest --help
+
+      - name: Publish GitHub release
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "qemer-ingest $TAG" \
+            --generate-notes \
+            --fail-on-no-commits
