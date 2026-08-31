@@ -93,5 +93,5 @@ jobs:
           gh release create "$TAG" dist/* \
             --target "$GITHUB_SHA" \
             --title "qemer-ingest $TAG" \
-            --generate-notes \
+            --notes "Full Changelog: https://github.com/$GITHUB_REPOSITORY/commits/$TAG" \
             --fail-on-no-commits
