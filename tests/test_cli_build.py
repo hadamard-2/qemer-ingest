@@ -1,4 +1,5 @@
 import json
+import re
 from hashlib import sha256
 from pathlib import Path
 from types import TracebackType
@@ -407,13 +408,14 @@ def test_build_chunks_before_embedding_and_records_the_token_policy(
 def test_build_help_describes_token_chunking_options() -> None:
     result = CliRunner().invoke(cli.app, ["build", "--help"])
     assert result.exit_code == 0
-    assert "--chunk-size-tokens" in result.output
-    assert "--chunk-overlap-tokens" in result.output
-    assert "--document-prefix" in result.output
-    assert "2048" in result.output
-    assert "0" in result.output
-    assert "--chunk-size " not in result.output
-    assert "--chunk-overlap " not in result.output
+    output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.output)
+    assert "--chunk-size-tokens" in output
+    assert "--chunk-overlap-tokens" in output
+    assert "--document-prefix" in output
+    assert "2048" in output
+    assert "0" in output
+    assert "--chunk-size " not in output
+    assert "--chunk-overlap " not in output
 
 
 @pytest.mark.parametrize(
